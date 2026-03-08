@@ -1,0 +1,188 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AIArmada\FilamentOrders\Widgets;
+
+use AIArmada\Orders\Models\Order;
+use Filament\Facades\Filament;
+use Filament\Forms;
+use Filament\Forms\Concerns\InteractsWithForms;
+use Filament\Forms\Contracts\HasForms;
+use Filament\Notifications\Notification;
+use Filament\Widgets\Widget;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Gate;
+use Throwable;
+
+final class OrderTimelineWidget extends Widget implements HasForms
+{
+    use InteractsWithForms;
+
+    public ?Order $record = null;
+
+    public ?array $noteData = [];
+
+    protected string $view = 'filament-orders::widgets.order-timeline';
+
+    protected int | string | array $columnSpan = 'full';
+
+    public function mount(Order $record): void
+    {
+        $this->record = $record;
+    }
+
+    public function getTimelineEvents(): Collection
+    {
+        if (! $this->record) {
+            return collect([]);
+        }
+
+        $this->record->loadMissing([
+            'customer',
+            'payments',
+            'orderNotes.user',
+        ]);
+
+        $events = collect([]);
+
+        // Order created event
+        $customerName = $this->record->customer?->getAttribute('full_name')
+            ?? $this->record->customer?->getAttribute('name')
+            ?? 'Guest';
+
+        $events->push([
+            'type' => 'created',
+            'title' => 'Order Created',
+            'description' => 'Order was placed by ' . $customerName,
+            'icon' => 'heroicon-o-shopping-cart',
+            'color' => 'success',
+            'timestamp' => $this->record->created_at,
+        ]);
+
+        // Payment events
+        foreach ($this->record->payments ?? [] as $payment) {
+            $currency = $this->record->currency ?? (string) config('orders.currency.default', 'MYR');
+            $statusLabel = $payment->status->label();
+
+            $events->push([
+                'type' => 'payment',
+                'title' => 'Payment ' . $statusLabel,
+                'description' => sprintf(
+                    '%s payment of %s via %s',
+                    $statusLabel,
+                    $currency . ' ' . number_format($payment->amount / 100, 2),
+                    $payment->gateway
+                ),
+                'icon' => $payment->status->isFinal() ? 'heroicon-o-check-circle' : 'heroicon-o-credit-card',
+                'color' => $payment->status->color(),
+                'timestamp' => $payment->created_at,
+            ]);
+        }
+
+        // Shipment events
+        if ($this->record->shipped_at) {
+            $shippingData = $this->record->metadata['shipping'] ?? [];
+            $carrier = is_array($shippingData) ? ($shippingData['carrier'] ?? 'Unknown') : 'Unknown';
+            $trackingNumber = is_array($shippingData) ? ($shippingData['tracking_number'] ?? 'N/A') : 'N/A';
+
+            $events->push([
+                'type' => 'shipped',
+                'title' => 'Order Shipped',
+                'description' => sprintf(
+                    'Shipped via %s (Tracking: %s)',
+                    $carrier,
+                    $trackingNumber
+                ),
+                'icon' => 'heroicon-o-truck',
+                'color' => 'info',
+                'timestamp' => $this->record->shipped_at,
+            ]);
+        }
+
+        // Notes
+        foreach ($this->record->orderNotes as $note) {
+            $causerName = $note->user?->getAttribute('name')
+                ?? $note->user?->getAttribute('full_name')
+                ?? 'System';
+
+            $events->push([
+                'type' => 'note',
+                'title' => 'Note Added',
+                'description' => $note->content,
+                'icon' => 'heroicon-o-chat-bubble-left-ellipsis',
+                'color' => 'gray',
+                'timestamp' => $note->created_at,
+                'causer' => $causerName,
+            ]);
+        }
+
+        return $events->sortByDesc('timestamp')->values();
+    }
+
+    public function form(Forms\Form $form): Forms\Form
+    {
+        return $form
+            ->schema([
+                Forms\Components\Textarea::make('content')
+                    ->label('Note')
+                    ->required()
+                    ->rows(2)
+                    ->placeholder('Add a note to this order timeline...'),
+
+                Forms\Components\Toggle::make('is_customer_visible')
+                    ->label('Visible to Customer')
+                    ->default(false)
+                    ->helperText('Customer will see this note in their order history'),
+            ])
+            ->statePath('noteData');
+    }
+
+    public function addNote(): void
+    {
+        $data = $this->form->getState();
+
+        if (! $this->record) {
+            return;
+        }
+
+        $user = Filament::auth()->user();
+
+        if (! $user || ! Gate::forUser($user)->allows('addNote', $this->record)) {
+            Notification::make()
+                ->title('Not authorized')
+                ->danger()
+                ->send();
+
+            return;
+        }
+
+        try {
+            $this->record->orderNotes()->create([
+                'content' => $data['content'],
+                'is_customer_visible' => $data['is_customer_visible'] ?? false,
+                'user_id' => Filament::auth()->id(),
+            ]);
+        } catch (Throwable $e) {
+            report($e);
+
+            Notification::make()
+                ->title('Failed to add note')
+                ->body('Please try again. If the problem persists, contact support.')
+                ->danger()
+                ->send();
+
+            return;
+        }
+
+        $this->noteData = [];
+        $this->form->fill();
+
+        $this->dispatch('note-added');
+
+        Notification::make()
+            ->title('Note added successfully')
+            ->success()
+            ->send();
+    }
+}
