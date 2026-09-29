@@ -42,8 +42,11 @@ keywords:
 
 ## Key surfaces
 - Resources: `OrderResource`
+- Pages: `OrderFulfillmentPage`, `OrderTimelinePage`
+- Widgets: `OrderStatsWidget`, `OrderStatusDistributionWidget`, `OrderTimelineWidget`, `RecentOrdersWidget`
+- Relation managers: `ItemsRelationManager`, `PaymentsRelationManager`, `RefundsRelationManager`, `NotesRelationManager`
 - Actions/Services: `Support/FilamentOrdersCache`
-- Config `filament-orders.php`: `navigation`, `pages`, `payment_gateways`, `features`
+- Config `filament-orders.php` keys: `navigation.group`, `navigation.sort`, `pages.timeline`, `pages.fulfillment`, `pages.navigation_sort.{fulfillment,timeline}`, `payment_gateways`, `features.enable_invoice_download`
 
 ## Docs map
 - Start: `01-overview` → `03-configuration` → `04-usage` → `99-troubleshooting`

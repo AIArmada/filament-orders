@@ -80,19 +80,21 @@ Pdf::html('<h1>Test</h1>')->save('/tmp/test.pdf');
 ```php
 // Confirm Payment requires:
 // - transaction_id (string)
-// - gateway (from config options)
+// - gateway (from config('filament-orders.payment_gateways') options)
 
-// Ship Order requires (manual tracking mode):
-// - carrier (string; or a select from FulfillmentHandler::availableCarriers()
-//   plus a service field when a fulfillment handler is bound)
-// - tracking_number (string)
+// Ship Order requires:
+// - carrier (text, or a select of AIArmada\Orders\Contracts\FulfillmentHandler
+//   availableCarriers() when a handler is bound)
+// - tracking_number (string) — only when no fulfillment handler is bound
+// - service (string) — only when a fulfillment handler is bound
 ```
 
 ### Table performance issues
 
 **Cause**: Expensive queries on large order datasets. (The package does not poll tables automatically.)
 
-**Solution**: Reduce query cost with eager loading and indexed filters:
+**Solution**: Reduce query cost with eager loading and indexed filters. No table
+in this package polls by default; tune any polling added in your custom pages.
 
 ```php
 public static function getEloquentQuery(): Builder
@@ -141,19 +143,24 @@ if (config('app.debug')) {
 
 ## Cache Keys
 
-The package uses these cache keys:
+`AIArmada\FilamentOrders\Support\FilamentOrdersCache` writes owner-scoped keys
+through `AIArmada\CommerceSupport\Support\OwnerCache`:
 
-| Key Pattern | TTL | Description |
+| Logical key | TTL | Description |
 |-------------|-----|-------------|
-| `filament-orders.stats.owner-only` | 15s | Stats widget data (owner scope) |
-| `filament-orders.stats.with-global` | 15s | Stats widget data (with global rows) |
+| `filament-orders.stats.owner-only` | 15s | Stats widget + status distribution widget data |
+| `filament-orders.stats.with-global` | 15s | Same, including global orders |
 
-Keys are owner-scoped via `OwnerCache`. Clear an order's cached stats with:
+There is no separate `status-distribution` key — the status chart reads the
+stats cache. Full cache keys are prefixed with `owner:{ownerScopeKey}:v{N}:`,
+so forget them by logical key rather than by string:
 
 ```php
-use AIArmada\FilamentOrders\Support\FilamentOrdersCache;
+use AIArmada\CommerceSupport\Support\OwnerCache;
+use AIArmada\CommerceSupport\Support\OwnerContext;
 
-FilamentOrdersCache::forgetForOrder($order);
+OwnerCache::forget(OwnerContext::resolve(), 'filament-orders.stats.owner-only');
+OwnerCache::forget(OwnerContext::resolve(), 'filament-orders.stats.with-global');
 ```
 
 ## Getting Help
