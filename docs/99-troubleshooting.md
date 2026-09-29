@@ -80,27 +80,24 @@ Pdf::html('<h1>Test</h1>')->save('/tmp/test.pdf');
 ```php
 // Confirm Payment requires:
 // - transaction_id (string)
-// - gateway (from config('filament-orders.payment_gateways') options)
+// - gateway (from config options)
 
-// Ship Order requires:
-// - carrier (text, or a select of AIArmada\Orders\Contracts\FulfillmentHandler
-//   availableCarriers() when a handler is bound)
-// - tracking_number (string) — only when no fulfillment handler is bound
-// - service (string) — only when a fulfillment handler is bound
+// Ship Order requires (manual tracking mode):
+// - carrier (string; or a select from FulfillmentHandler::availableCarriers()
+//   plus a service field when a fulfillment handler is bound)
+// - tracking_number (string)
 ```
 
-### Table polling causing performance issues
+### Table performance issues
 
-**Cause**: Poll interval too aggressive or expensive queries.
+**Cause**: Expensive queries on large order datasets. (The package does not poll tables automatically.)
 
-**Solution**: No table in this package polls by default, so there is no
-`filament-orders` poll-interval config key. If you added polling in a custom
-page, tune or disable it there:
+**Solution**: Reduce query cost with eager loading and indexed filters:
 
 ```php
-public function table(Table $table): Table
+public static function getEloquentQuery(): Builder
 {
-    return parent::table($table)->poll(null);
+    return parent::getEloquentQuery()->with(['items', 'payments']);
 }
 ```
 
@@ -114,7 +111,7 @@ public function table(Table $table): Table
 
 ### Slow Dashboard Widgets
 
-1. Widgets use 15-30 second cache by default.
+1. The stats widget uses a 15-second owner-scoped cache by default.
 2. For larger datasets, increase cache duration.
 3. Consider reducing query complexity.
 
@@ -144,24 +141,19 @@ if (config('app.debug')) {
 
 ## Cache Keys
 
-`AIArmada\FilamentOrders\Support\FilamentOrdersCache` writes owner-scoped keys
-through `AIArmada\CommerceSupport\Support\OwnerCache`:
+The package uses these cache keys:
 
-| Logical key | TTL | Description |
+| Key Pattern | TTL | Description |
 |-------------|-----|-------------|
-| `filament-orders.stats.owner-only` | 15s | Stats widget + status distribution widget data |
-| `filament-orders.stats.with-global` | 15s | Same, including global orders |
+| `filament-orders.stats.owner-only` | 15s | Stats widget data (owner scope) |
+| `filament-orders.stats.with-global` | 15s | Stats widget data (with global rows) |
 
-There is no separate `status-distribution` key — the status chart reads the
-stats cache. Full cache keys are prefixed with `owner:{ownerScopeKey}:v{N}:`,
-so forget them by logical key rather than by string:
+Keys are owner-scoped via `OwnerCache`. Clear an order's cached stats with:
 
 ```php
-use AIArmada\CommerceSupport\Support\OwnerCache;
-use AIArmada\CommerceSupport\Support\OwnerContext;
+use AIArmada\FilamentOrders\Support\FilamentOrdersCache;
 
-OwnerCache::forget(OwnerContext::resolve(), 'filament-orders.stats.owner-only');
-OwnerCache::forget(OwnerContext::resolve(), 'filament-orders.stats.with-global');
+FilamentOrdersCache::forgetForOrder($order);
 ```
 
 ## Getting Help

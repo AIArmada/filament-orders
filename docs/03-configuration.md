@@ -19,7 +19,7 @@ Configure navigation group and sort order:
 
 ## Pages
 
-Toggle the standalone order pages and control their sort order:
+Toggle the bundled list pages and their navigation sort order:
 
 ```php
 'pages' => [
@@ -59,9 +59,11 @@ Toggle optional features:
 
 ## Full Configuration Example
 
-The shipped `config/filament-orders.php` contains only these four top-level keys:
-
 ```php
+<?php
+
+declare(strict_types=1);
+
 return [
     /* Navigation */
     'navigation' => [
@@ -93,9 +95,6 @@ return [
 ];
 ```
 
-There is no `tables` key: no table in this package polls, so poll interval and
-date format are not configurable here.
-
 ## Core Package Configuration
 
 Remember to also configure the core orders package:
@@ -105,7 +104,7 @@ Remember to also configure the core orders package:
 return [
     'database' => [
         'tables' => [...],
-        'json_column_type' => 'json',
+        'json_column_type' => 'jsonb',
     ],
     
     'currency' => [

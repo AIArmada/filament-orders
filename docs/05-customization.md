@@ -6,33 +6,26 @@ title: Customization
 
 ## Extending the Order Resource
 
-`AIArmada\FilamentOrders\Resources\OrderResource` is `final`, so extend the
-helper classes it delegates to instead: `OrderForm::schema()`,
-`OrdersTable::configure()` and `OrderInfolist::schema()`. Register your own
-resource through `$panel->resources([...])` and point your pages at it with
-`protected static string $resource`.
-
 ### Custom Columns
 
+Create a custom resource that extends the base:
+
 ```php
-namespace App\Filament\Resources\OrderResource\Tables;
+namespace App\Filament\Resources;
 
-use AIArmada\FilamentOrders\Resources\OrderResource\Tables\OrdersTable as BaseOrdersTable;
-use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Table;
+use AIArmada\FilamentOrders\Resources\OrderResource as BaseOrderResource;
 
-class OrdersTable extends BaseOrdersTable
+class OrderResource extends BaseOrderResource
 {
-    public static function configure(Table $table): Table
+    public static function table(Table $table): Table
     {
-        return parent::configure($table)
+        return parent::table($table)
             ->columns([
-                ...parent::configure($table)->getColumns(),
-
+                ...parent::table($table)->getColumns(),
+                
                 // Add custom column
-                TextColumn::make('customer_data.name')
-                    ->label('Customer')
-                    ->searchable(),
+                Tables\Columns\TextColumn::make('custom_field')
+                    ->label('Custom Field'),
             ]);
     }
 }
@@ -41,43 +34,35 @@ class OrdersTable extends BaseOrdersTable
 ### Custom Filters
 
 ```php
-public static function configure(Table $table): Table
+public static function table(Table $table): Table
 {
-    return parent::configure($table)
+    return parent::table($table)
         ->filters([
-            ...parent::configure($table)->getFilters(),
-
+            ...parent::table($table)->getFilters(),
+            
             // Add custom filter
-            Tables\Filters\SelectFilter::make('status')
-                ->options(\AIArmada\FilamentOrders\Resources\OrderResource::getStatusOptions()),
+            Tables\Filters\SelectFilter::make('priority')
+                ->options([
+                    'high' => 'High Priority',
+                    'normal' => 'Normal',
+                ]),
         ]);
 }
 ```
 
 ### Custom Actions
 
-Resource pages are not `final`, so extend the page and add header actions:
-
 ```php
-namespace App\Filament\Resources\OrderResource\Pages;
-
-use AIArmada\FilamentOrders\Resources\OrderResource\Pages\EditOrder as BaseEditOrder;
-use AIArmada\Orders\Models\Order;
-use Filament\Actions\Action;
-
-class EditOrder extends BaseEditOrder
+protected function getHeaderActions(): array
 {
-    protected function getHeaderActions(): array
-    {
-        return [
-            ...parent::getHeaderActions(),
-
-            Action::make('custom_action')
-                ->label('Custom Action')
-                ->icon('heroicon-o-star')
-                ->action(fn (Order $record) => $this->handleCustomAction($record)),
-        ];
-    }
+    return [
+        ...parent::getHeaderActions(),
+        
+        Actions\Action::make('custom_action')
+            ->label('Custom Action')
+            ->icon('heroicon-o-star')
+            ->action(fn (Order $record) => $this->handleCustomAction($record)),
+    ];
 }
 ```
 
@@ -88,7 +73,6 @@ class EditOrder extends BaseEditOrder
 ```php
 namespace App\Filament\Widgets;
 
-use AIArmada\CommerceSupport\Support\MoneyFormatter;
 use AIArmada\Orders\Models\Order;
 use Filament\Widgets\ChartWidget;
 
@@ -98,28 +82,21 @@ class OrderRevenueChart extends ChartWidget
 
     protected function getData(): array
     {
-        // grand_total is stored in minor units; format through the shared
-        // MoneyFormatter so the scale and ISO 4217 code are never ambiguous.
-        $rows = Order::query()
+        $data = Order::query()
             ->forOwner()
             ->whereNotNull('paid_at')
-            ->selectRaw('currency')
-            ->selectRaw('SUM(grand_total) as total')
-            ->groupBy('currency')
+            ->selectRaw('MONTH(created_at) as month, SUM(grand_total) as total')
+            ->groupBy('month')
             ->get();
-
-        $byCurrency = $rows->mapWithKeys(fn (Order $row): array => [
-            $row->currency => MoneyFormatter::formatMinorWithCode((int) $row->total, $row->currency),
-        ]);
 
         return [
             'datasets' => [
                 [
-                    'label' => 'Paid revenue',
-                    'data' => $byCurrency->values()->all(),
+                    'label' => 'Revenue',
+                    'data' => $data->pluck('total')->toArray(),
                 ],
             ],
-            'labels' => $byCurrency->keys()->all(),
+            'labels' => $data->pluck('month')->toArray(),
         ];
     }
 
@@ -197,35 +174,27 @@ Update config to add your gateways:
 
 ## Custom Order Form Schema
 
-`OrderForm` exposes a static `schema(): array`, so append to that array from your
-own resource's `form(Schema $schema)`:
+Override the form in your custom resource:
 
 ```php
-namespace App\Filament\Resources\OrderResource\Schemas;
-
-use AIArmada\FilamentOrders\Resources\OrderResource\Schemas\OrderForm as BaseOrderForm;
-use Filament\Forms\Components\Select;
-use Filament\Forms\Components\Section;
+use AIArmada\FilamentOrders\Resources\OrderResource\Schemas\OrderForm;
+use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 
-class OrderForm
+public static function form(Schema $schema): Schema
 {
-    /**
-     * @return array<int, Section>
-     */
-    public static function schema(): array
-    {
-        return [
-            ...BaseOrderForm::schema(),
+    return $schema
+        ->schema([
+            ...OrderForm::schema(),
 
-            Section::make('Sales')
+            // Add custom fields
+            Section::make('Custom Details')
                 ->schema([
-                    Select::make('sales_rep_id')
+                    Forms\Components\Select::make('sales_rep_id')
                         ->relationship('salesRep', 'name')
                         ->label('Sales Representative'),
                 ]),
-        ];
-    }
+        ]);
 }
 ```
 
@@ -249,16 +218,14 @@ Actions\Action::make('download_invoice')
 
 ## Custom Authorization
 
-`AIArmada\Orders\Policies\OrderPolicy` is `final`, so write your own policy
-against the same ability names and register it in a service provider
-(`AuthServiceProvider::$policies` no longer exists in Laravel 11+):
+Override the policy for custom permission logic:
 
 ```php
 namespace App\Policies;
 
-use AIArmada\Orders\Models\Order;
+use AIArmada\Orders\Policies\OrderPolicy as BaseOrderPolicy;
 
-class OrderPolicy
+class OrderPolicy extends BaseOrderPolicy
 {
     public function cancel(User $user, Order $order): bool
     {
@@ -266,8 +233,8 @@ class OrderPolicy
         if ($order->grand_total > 100000) {
             return $user->hasRole('supervisor');
         }
-
-        return $user->can('cancel', $order); // delegates to the package policy
+        
+        return parent::cancel($user, $order);
     }
 }
 ```
@@ -275,12 +242,8 @@ class OrderPolicy
 Register your policy:
 
 ```php
-// AppServiceProvider::boot()
-use AIArmada\Orders\Models\Order;
-use Illuminate\Support\Facades\Gate;
-
-public function boot(): void
-{
-    Gate::policy(Order::class, \App\Policies\OrderPolicy::class);
-}
+// AuthServiceProvider.php
+protected $policies = [
+    Order::class => OrderPolicy::class,
+];
 ```
